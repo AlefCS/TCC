@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module lfsr_rng (
     output reg [31:0] rnd,
     input [31:0] seed,

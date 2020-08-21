@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module ram #(
     parameter  RAM_SIZE   = 64,
     parameter  DATA_WIDTH = 8,

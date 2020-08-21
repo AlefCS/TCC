@@ -1,6 +1,8 @@
+`timescale 1ns / 1ps
+
 module mutation #(
     parameter SEED     = 32'hA1EF_CDE5,
-    parameter MUT_RATE = 12              // $floor(0.05*256)
+    parameter MUT_RATE = 12              // $floor(0.05*256) ou 5%
 )(
     output logic signed [7:0] mut_child1,
     output logic signed [7:0] mut_child2,

@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module crossover(
     output logic signed [7:0] child1,
     output logic signed [7:0] child2,

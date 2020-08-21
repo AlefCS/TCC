@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module rng (
     output logic [31:0] rnd1,
     output logic [31:0] rnd2,

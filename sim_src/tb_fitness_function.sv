@@ -10,7 +10,7 @@ module tb_fitness_function ();
     logic signed [7:0]  chrom2;
     logic clk;
 
-    logic clk, reset;
+    logic reset;
     logic [31:0] seed;
 
     reg signed [26:0] sim_fitness1;
