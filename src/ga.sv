@@ -1,5 +1,7 @@
 `timescale 1ns / 1ps
 
+`define POP_SIZE 16
+
 module ga (
     output logic [ 7:0] best,
     output logic [26:0] best_fit,
@@ -22,9 +24,14 @@ module ga (
     // State variable
     states_t state;
 
+    // Signals for 'xover' module
+    logic xover_enable;
+    wire [31:0] xover_child1;
+    wire [31:0] xover_child2;
+    
     // Signals for 'sel' module
     logic sel_enable;
-    wire sel_selected;
+    wire  sel_selected;
     // Registers for the pipeline between selection and crossover
     reg [31:0] pipelineSC_seltd[2];
 
@@ -33,7 +40,6 @@ module ga (
     wire signed [26:0] ff_fit1;
     wire signed [26:0] ff_fit2;
     // Registers for the pipeline between fitness and selection
-    reg [26:0] pipelineFS_fit[2];
     reg [31:0] pipelineFS_pop[2];
 
     // Signals for 'pop_init' module
@@ -57,9 +63,8 @@ module ga (
         end else begin
             // Connect pipelines
             pipelineIF_pop <= {pop_init_out1, pop_init_out2}; // TODO quando também tiver MUT tem que colocar a condicional que cria o mux que antecede o primeiro pipeline
-            pipelineFS_fit <= {ff_fit1, ff_fit2};
             pipelineFS_pop <= pipelineIF_pop;
-            if (state == INIT2_1 or state == INIT3) begin
+            if (state == INIT2_1 ||  state == INIT3) begin
                 if (sel_selected == 1'b0) begin
                     pipelineSC_seltd[0] <= pipelineFS_pop[0];
                 end else begin
@@ -75,19 +80,30 @@ module ga (
 
             case (state)
                 INIT0: begin
-                    ff_enable  <= 1'b1;
+                    state <= INIT1;
+                    ff_enable <= 1'b1;
                 end
                 INIT1: begin
+                    state <= INIT2_1;
                     sel_enable <= 1'b1;
                 end
                 INIT2_1: begin
-                    // TODO - Primeira execução do SEL
+                    state <= INIT2_2;
                 end
                 INIT2_2: begin
-                    // TODO - Segunda execução do SEL
+                    state <= INIT3;
+                    xover_enable <= 1'b1;
                 end
                 INIT3: begin
-                    // TODO - XOVER ativado e MUT desativado
+                    if (firstTicks_counter < (`POP_SIZE >> 1) + 3) begin
+                        state <= INIT4;
+                        xover_enable <= 1'b0;
+                        // TODO - ativar MUT
+                    end else begin
+                        state <= STEADY;
+                        // TODO - ativar segundo SEL
+                        // TODO - ativar MUT
+                    end
                 end
                 INIT4: begin
                     // TODO - XOVER desativado e MUT ativado
@@ -101,9 +117,24 @@ module ga (
                 default: state <= INIT0;
             endcase
 
+            if (firstTicks_counter < (`POP_SIZE >> 1) + 3) begin
+                firstTicks_counter <= firstTicks_counter + 1;
+            end else begin
+                firstTicks_counter <= firstTicks_counter;
+            end
             // TODO o resto de tudo
         end
     end
+
+    // Crossover - XOVER
+    crossover xover (
+        .child1  (),
+        .child2  (),
+        .parent1 (pipelineSC_seltd[0]),
+        .parent2 (pipelineSC_seltd[1]),
+        .enable  (xover_enable),
+        .clk     (clk)
+    );
 
     // Selection - SEL
     selection sel (
