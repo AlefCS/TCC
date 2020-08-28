@@ -24,6 +24,15 @@ module ga (
     // State variable
     states_t state;
 
+    // Signals for 'buffer' module
+    logic buffer_renable;
+    logic buffer_wenable;
+    wire [(8 << 1) - 1:0] buffer_out;
+
+    // Signals for 'mut' module
+    wire [7:0] mut_child1;
+    wire [7:0] mut_child2;
+
     // Signals for 'xover' module
     logic xover_enable;
     wire [31:0] xover_child1;
@@ -48,18 +57,23 @@ module ga (
     // Register for the pipeline between initializer and fitness
     reg [31:0] pipelineIF_pop[2];
 
-    // Counter to know when to change state
-    shortint unsigned firstTicks_counter;
+    // Counter to know when to change to steady state
+    reg [$clog2(`POP_SIZE >> 2) - 1:0] init3_counter;
+    // Counter to know when to start consuming from buffer
+    reg [$clog2(`POP_SIZE >> 1) - 1:0] fitTicks_counter;
 
     // Main
     always @ (posedge clk) begin
         if (reset) begin
-            state <= INIT;
-            firstTicks_counter <= 0;
+            state <= INIT0;
+            init3_counter <= 0;
+            fitTicks_counter <= 0;
 
             // Initializing enable signals
-            ff_enable  <= 1'b0;
-            sel_enable <= 1'b0;
+            ff_enable      <= 1'b0;
+            sel_enable     <= 1'b0;
+            buffer_renable <= 1'b0;
+            buffer_wenable <= 1'b0;
         end else begin
             // Connect pipelines
             pipelineIF_pop <= {pop_init_out1, pop_init_out2}; // TODO quando também tiver MUT tem que colocar a condicional que cria o mux que antecede o primeiro pipeline
@@ -95,18 +109,20 @@ module ga (
                     xover_enable <= 1'b1;
                 end
                 INIT3: begin
-                    if (firstTicks_counter < (`POP_SIZE >> 1) + 3) begin
+                    if (init3_counter < (`POP_SIZE >> 2) - 1) begin
                         state <= INIT4;
                         xover_enable <= 1'b0;
-                        // TODO - ativar MUT
                     end else begin
                         state <= STEADY;
                         // TODO - ativar segundo SEL
-                        // TODO - ativar MUT
                     end
+
+                    w_enable <= 1'b0;
+                    init3_counter <= init3_counter + 1;
                 end
                 INIT4: begin
-                    // TODO - XOVER desativado e MUT ativado
+                    xover_enable <= 1'b1;
+                    w_enable     <= 1'b1;
                 end
                 STEADY: begin
                     // TODO - Estado estacionário
@@ -117,19 +133,48 @@ module ga (
                 default: state <= INIT0;
             endcase
 
-            if (firstTicks_counter < (`POP_SIZE >> 1) + 3) begin
-                firstTicks_counter <= firstTicks_counter + 1;
+            if (ff_enable) begin
+                if (fitTicks_counter == (`POP_SIZE >> 1) - 2) begin
+                    fitTicks_counter <= fitTicks_counter;
+                    r_enable <= 1'b1;
+                end else begin
+                    fitTicks_counter <= fitTicks_counter + 1;
+                    r_enable <= 1'b0;
+                end
             end else begin
-                firstTicks_counter <= firstTicks_counter;
+                fitTicks_counter <= fitTicks_counter;
             end
             // TODO o resto de tudo
         end
     end
 
+    // Buffer - BUFFER
+    buffer #(
+        .SIZE  ((`POP_SIZE >> 2) - 1),
+        .WIDTH (8 << 1)                         // POP width multiplied by 2
+    ) buffer (
+        .out      (buffer_out),
+        .in       ({mut_child1, mut_child2}),
+        .r_enable (buffer_renable),
+        .w_enable (buffer_wenable),
+        .reset    (reset),
+        .clk      (clk)
+    );
+
+    // Mutation - MUT
+    mutation mut (
+        .mut_child1  (mut_child1),
+        .mut_child2  (mut_child2),
+        .orig_child1 (xover_child1),
+        .orig_child2 (xover_child2),
+        .reset       (reset),
+        .clk         (clk)
+    );
+
     // Crossover - XOVER
     crossover xover (
-        .child1  (),
-        .child2  (),
+        .child1  (xover_child1),
+        .child2  (xover_child2),
         .parent1 (pipelineSC_seltd[0]),
         .parent2 (pipelineSC_seltd[1]),
         .enable  (xover_enable),
