@@ -35,32 +35,34 @@ module ga (
 
     // Signals for 'xover' module
     logic xover_enable;
-    wire [31:0] xover_child1;
-    wire [31:0] xover_child2;
+    wire [7:0] xover_child1;
+    wire [7:0] xover_child2;
     
     // Signals for 'sel' module
     logic sel_enable;
     wire  sel_selected;
     // Registers for the pipeline between selection and crossover
-    reg [31:0] pipelineSC_seltd[2];
+    reg [7:0] pipelineSC_seltd[2];
 
     // Signals for 'ff' module
     logic ff_enable;
     wire signed [26:0] ff_fit1;
     wire signed [26:0] ff_fit2;
     // Registers for the pipeline between fitness and selection
-    reg [31:0] pipelineFS_pop[2];
+    reg [7:0] pipelineFS_pop[2];
 
     // Signals for 'pop_init' module
-    wire [31:0] pop_init_out1;
-    wire [31:0] pop_init_out2;
+    wire [7:0] pop_init_out1;
+    wire [7:0] pop_init_out2;
     // Register for the pipeline between initializer and fitness
-    reg [31:0] pipelineIF_pop[2];
+    reg [7:0] pipelineIF_pop[2];
 
     // Counter to know when to change to steady state
     reg [$clog2(`POP_SIZE >> 2) - 1:0] init3_counter;
     // Counter to know when to start consuming from buffer
     reg [$clog2(`POP_SIZE >> 1) - 1:0] fitTicks_counter;
+    // Counter to know when to stop getting init population
+    reg [$clog2(`POP_SIZE) - 1:0] initpop_counter;
 
     // Main
     always @ (posedge clk) begin
@@ -76,8 +78,15 @@ module ga (
             buffer_wenable <= 1'b0;
         end else begin
             // Connect pipelines
-            pipelineIF_pop <= {pop_init_out1, pop_init_out2}; // TODO quando também tiver MUT tem que colocar a condicional que cria o mux que antecede o primeiro pipeline
+            initpop_counter <= initpop_counter + 2;
+            if (initpop_counter < `POP_SIZE) begin
+                pipelineIF_pop <= {pop_init_out1, pop_init_out2};
+            end else begin
+                pipelineIF_pop <= {buffer_out[7:0], buffer_out[15:8]};
+            end
+
             pipelineFS_pop <= pipelineIF_pop;
+
             if (state == INIT2_1 ||  state == INIT3) begin
                 if (sel_selected == 1'b0) begin
                     pipelineSC_seltd[0] <= pipelineFS_pop[0];
@@ -117,15 +126,16 @@ module ga (
                         // TODO - ativar segundo SEL
                     end
 
-                    w_enable <= 1'b0;
+                    buffer_wenable <= 1'b0;
                     init3_counter <= init3_counter + 1;
                 end
                 INIT4: begin
                     xover_enable <= 1'b1;
-                    w_enable     <= 1'b1;
+                    buffer_wenable     <= 1'b1;
+                    state        <= INIT3;
                 end
                 STEADY: begin
-                    // TODO - Estado estacionário
+                    // TODO - Estado estacionário -- Atingiu condição de término vai para FINISHED
                 end
                 FINISHED: begin
                     // TODO - Terminou execução do algoritmo
@@ -136,10 +146,10 @@ module ga (
             if (ff_enable) begin
                 if (fitTicks_counter == (`POP_SIZE >> 1) - 2) begin
                     fitTicks_counter <= fitTicks_counter;
-                    r_enable <= 1'b1;
+                    buffer_renable <= 1'b1;
                 end else begin
                     fitTicks_counter <= fitTicks_counter + 1;
-                    r_enable <= 1'b0;
+                    buffer_renable <= 1'b0;
                 end
             end else begin
                 fitTicks_counter <= fitTicks_counter;
@@ -148,10 +158,36 @@ module ga (
         end
     end
 
+    // // SEL Buffer #1 - BUFFER
+    // buffer #(
+    //     .SIZE  (4),
+    //     .WIDTH (8 + 27)                         // Chromossome width + Fitness width
+    // ) sel_buffer1 (
+    //     .out      (),
+    //     .in       (),
+    //     .r_enable (),
+    //     .w_enable (),
+    //     .reset    (reset),
+    //     .clk      (clk)
+    // );
+
+    // // SEL Buffer #2 - BUFFER
+    // buffer #(
+    //     .SIZE  (4),
+    //     .WIDTH (8 + 27)                         // Chromossome width + Fitness width
+    // ) sel_buffer2 (
+    //     .out      (),
+    //     .in       (),
+    //     .r_enable (),
+    //     .w_enable (),
+    //     .reset    (reset),
+    //     .clk      (clk)
+    // );
+
     // Buffer - BUFFER
     buffer #(
         .SIZE  ((`POP_SIZE >> 2) - 1),
-        .WIDTH (8 << 1)                         // POP width multiplied by 2
+        .WIDTH (8 << 1)                         // Chromossome width multiplied by 2
     ) buffer (
         .out      (buffer_out),
         .in       ({mut_child1, mut_child2}),
@@ -201,7 +237,7 @@ module ga (
     );
 
     // Population initializer - RNG
-    rng pop_init (
+    rng8 pop_init (
         .rnd1  (pop_init_out1),
         .rnd2  (pop_init_out2),
         .seed  (seed),
