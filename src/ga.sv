@@ -24,6 +24,19 @@ module ga (
     // State variable
     states_t state;
 
+    // Signals for 'sel_buffer1' module
+    wire  [(8 + 27) - 1:0] selbuffer1_out;
+    logic [(8 + 27) - 1:0] selbuffer1_in;
+    logic selbuffer1_renable;
+    logic selbuffer1_wenable;
+
+    // Signals for 'sel_buffer2' module
+    wire  [(8 + 27) - 1:0] selbuffer2_out;
+    logic [(8 + 27) - 1:0] selbuffer2_in;
+    logic selbuffer2_renable;
+    logic selbuffer2_wenable;
+    reg  [(8 + 27) - 1:0] pipelineSbSb[2];
+
     // Signals for 'buffer' module
     logic buffer_renable;
     logic buffer_wenable;
@@ -35,21 +48,28 @@ module ga (
 
     // Signals for 'xover' module
     logic xover_enable;
-    wire [7:0] xover_child1;
-    wire [7:0] xover_child2;
+    wire  [7:0] xover_child1;
+    wire  [7:0] xover_child2;
+    logic [7:0] xover_parent1;
+    logic [7:0] xover_parent2;
     
-    // Signals for 'sel' module
-    logic sel_enable;
-    wire  sel_selected;
+    // Signals for 'sel1' module
+    logic sel1_enable;
+    wire  sel1_selected;
     // Registers for the pipeline between selection and crossover
-    reg [7:0] pipelineSC_seltd[2];
+    reg [7:0] pipelineSC_seltd;
+
+    // Signals for 'sel2' module
+    logic sel2_enable;
+    wire  sel2_selected;
 
     // Signals for 'ff' module
     logic ff_enable;
     wire signed [26:0] ff_fit1;
     wire signed [26:0] ff_fit2;
     // Registers for the pipeline between fitness and selection
-    reg [7:0] pipelineFS_pop[2];
+    reg [7:0]  pipelineFS_pop[2];
+    reg [26:0] pipelineFS_fit[2];             // Hold the fitnesses for the selbuffer
 
     // Signals for 'pop_init' module
     wire [7:0] pop_init_out1;
@@ -62,7 +82,7 @@ module ga (
     // Counter to know when to start consuming from buffer
     reg [$clog2(`POP_SIZE >> 1) - 1:0] fitTicks_counter;
     // Counter to know when to stop getting init population
-    reg [$clog2(`POP_SIZE) - 1:0] initpop_counter;
+    reg [$clog2(`POP_SIZE):0] firstTicks_counter;
 
     // Main
     always @ (posedge clk) begin
@@ -70,77 +90,181 @@ module ga (
             state <= INIT0;
             init3_counter <= 0;
             fitTicks_counter <= 0;
+            firstTicks_counter <= 0;
 
             // Initializing enable signals
-            ff_enable      <= 1'b0;
-            sel_enable     <= 1'b0;
-            buffer_renable <= 1'b0;
-            buffer_wenable <= 1'b0;
+            ff_enable          <= 1'b0;
+            sel1_enable        <= 1'b0;
+            sel2_enable        <= 1'b0;
+            xover_enable       <= 1'b0;
+            buffer_renable     <= 1'b0;
+            buffer_wenable     <= 1'b0;
+            selbuffer1_renable <= 1'b0;
+            selbuffer1_wenable <= 1'b0;
+            selbuffer2_renable <= 1'b0;
+            selbuffer2_wenable <= 1'b0;
         end else begin
             // Connect pipelines
-            initpop_counter <= initpop_counter + 2;
-            if (initpop_counter < `POP_SIZE) begin
+            if (firstTicks_counter <= (`POP_SIZE >> 1)) begin
                 pipelineIF_pop <= {pop_init_out1, pop_init_out2};
             end else begin
                 pipelineIF_pop <= {buffer_out[7:0], buffer_out[15:8]};
             end
 
+            pipelineFS_fit <= {ff_fit1, ff_fit2};
+
+            pipelineSbSb <= {selbuffer1_out, selbuffer2_out};
+
+            /*************************
+            * Entrada dos selbuffers *
+            *************************/
+            if (sel1_selected == 1'b0) begin
+                selbuffer1_in <= {pipelineFS_pop[0], pipelineFS_fit[0]};
+            end else begin
+                selbuffer1_in <= {pipelineFS_pop[1], pipelineFS_fit[1]};
+            end
+
+            if (firstTicks_counter <= (`POP_SIZE >> 1) + 2) begin
+                if (sel1_selected == 1'b0) begin
+                    selbuffer2_in <= pipelineFS_pop[0];
+                end else begin
+                    selbuffer2_in <= pipelineFS_pop[1];
+                end
+            end else begin
+                if (sel2_selected == 1'b0) begin
+                    selbuffer2_in <= pipelineSbSb[0];
+                end else begin
+                    selbuffer2_in <= pipelineSbSb[1];
+                end
+            end
+
             pipelineFS_pop <= pipelineIF_pop;
 
-            if (state == INIT2_1 ||  state == INIT3) begin
-                if (sel_selected == 1'b0) begin
+            /* if (state == INIT2_2 ||  state == INIT3) begin
+                if (sel1_selected == 1'b0) begin
                     pipelineSC_seltd[0] <= pipelineFS_pop[0];
                 end else begin
                     pipelineSC_seltd[0] <= pipelineFS_pop[1];
                 end
             end else begin
-                if (sel_selected == 1'b0) begin
+                if (sel1_selected == 1'b0) begin
                     pipelineSC_seltd[1] <= pipelineFS_pop[0];
                 end else begin
                     pipelineSC_seltd[1] <= pipelineFS_pop[1];
+                end
+            end 
+            *
+            ** SUBSTITUÍDO PELA SOLUÇÃO LOGO ABAIXO **
+            */
+            if (sel1_selected == 1'b0) begin
+                pipelineSC_seltd <= pipelineFS_pop[0];
+            end else begin
+                pipelineSC_seltd <= pipelineFS_pop[1];
+            end
+
+            if (state == STEADY) begin
+                // Stop incrementing 'firstTicks_counter'
+                firstTicks_counter <= firstTicks_counter;
+
+                if (sel1_selected == 1'b0) begin
+                    xover_parent1 <= pipelineFS_pop[0];
+                end else begin
+                    xover_parent1 <= pipelineFS_pop[1];
+                end
+
+                if (sel2_selected == 1'b0) begin
+                    xover_parent2 <= pipelineSbSb[0][7:0];
+                end else begin
+                    xover_parent2 <= pipelineSbSb[1][7:0];
+                end
+            end else begin
+                // Increment 'firstTicks_counter'
+                firstTicks_counter <= firstTicks_counter + 1;
+
+                xover_parent1 <= pipelineSC_seltd;
+                if (sel1_selected == 1'b0) begin
+                    xover_parent2 <= pipelineFS_pop[0];
+                end else begin
+                    xover_parent2 <= pipelineFS_pop[1];
                 end
             end
 
             case (state)
                 INIT0: begin
                     state <= INIT1;
+
                     ff_enable <= 1'b1;
                 end
                 INIT1: begin
                     state <= INIT2_1;
-                    sel_enable <= 1'b1;
+
+                    sel1_enable <= 1'b1;
                 end
                 INIT2_1: begin
                     state <= INIT2_2;
+
+                    selbuffer1_wenable <= 1'b1;
                 end
                 INIT2_2: begin
                     state <= INIT3;
+
+                    selbuffer1_wenable <= 1'b0;
+                    selbuffer2_wenable <= 1'b1;
                     xover_enable <= 1'b1;
                 end
                 INIT3: begin
+                    // Check pass to STEADY state condition
                     if (init3_counter < (`POP_SIZE >> 2) - 1) begin
                         state <= INIT4;
-                        xover_enable <= 1'b0;
+
+                        xover_enable       <= 1'b0;
+                        selbuffer1_wenable <= 1'b1;
+                        selbuffer2_wenable <= 1'b0;
+
+                        if (init3_counter == (`POP_SIZE >> 2) - 2) begin
+                            selbuffer1_renable <= 1'b1;
+                        end
                     end else begin
                         state <= STEADY;
-                        // TODO - ativar segundo SEL
+
+                        selbuffer1_wenable <= 1'b1;
+                        selbuffer2_wenable <= 1'b1;
                     end
 
+                    // Enable signals
                     buffer_wenable <= 1'b0;
+                    // Counters
                     init3_counter <= init3_counter + 1;
                 end
                 INIT4: begin
-                    xover_enable <= 1'b1;
+                    state <= INIT3;
+                    // Enable signals
+                    selbuffer1_wenable <= 1'b0;
+                    selbuffer2_wenable <= 1'b1;
+                    xover_enable       <= 1'b1;
                     buffer_wenable     <= 1'b1;
-                    state        <= INIT3;
+
+                    // Check if it's going to last INIT3
+                    if (init3_counter == (`POP_SIZE >> 2) - 1) begin
+                        sel2_enable <= 1'b1;
+                    end
                 end
                 STEADY: begin
                     // TODO - Estado estacionário -- Atingiu condição de término vai para FINISHED
+                    // TODO se está indo para FINISHED então desabilitar todos os enables
+
                 end
                 FINISHED: begin
                     // TODO - Terminou execução do algoritmo
                 end
                 default: state <= INIT0;
+                /* TODO *****************************************
+                * estados de PRE-INIT para forçar um reset caso *
+                * atinja um estado desconhecido (no default).   *
+                *                                               *
+                * Se for implementado então o default levaria a *
+                * esse estado.                                  *
+                ************************************************/
             endcase
 
             if (ff_enable) begin
@@ -158,31 +282,31 @@ module ga (
         end
     end
 
-    // // SEL Buffer #1 - BUFFER
-    // buffer #(
-    //     .SIZE  (4),
-    //     .WIDTH (8 + 27)                         // Chromossome width + Fitness width
-    // ) sel_buffer1 (
-    //     .out      (),
-    //     .in       (),
-    //     .r_enable (),
-    //     .w_enable (),
-    //     .reset    (reset),
-    //     .clk      (clk)
-    // );
+    // SEL Buffer #1 - BUFFER
+    buffer #(
+        .SIZE  (`POP_SIZE >> 2),
+        .WIDTH (8 + 27)                         // Chromossome width + Fitness width
+    ) sel_buffer1 (
+        .out      ({best, best_fit}/* selbuffer1_out */),
+        .in       (selbuffer1_in),
+        .r_enable (selbuffer1_renable),
+        .w_enable (selbuffer1_wenable),
+        .reset    (reset),
+        .clk      (clk)
+    );
 
-    // // SEL Buffer #2 - BUFFER
-    // buffer #(
-    //     .SIZE  (4),
-    //     .WIDTH (8 + 27)                         // Chromossome width + Fitness width
-    // ) sel_buffer2 (
-    //     .out      (),
-    //     .in       (),
-    //     .r_enable (),
-    //     .w_enable (),
-    //     .reset    (reset),
-    //     .clk      (clk)
-    // );
+    // SEL Buffer #2 - BUFFER
+    buffer #(
+        .SIZE  (`POP_SIZE >> 2),
+        .WIDTH (8 + 27)                         // Chromossome width + Fitness width
+    ) sel_buffer2 (
+        .out      (selbuffer2_out),
+        .in       (selbuffer2_in),
+        .r_enable (selbuffer2_renable),
+        .w_enable (selbuffer2_wenable),
+        .reset    (reset),
+        .clk      (clk)
+    );
 
     // Buffer - BUFFER
     buffer #(
@@ -211,18 +335,27 @@ module ga (
     crossover xover (
         .child1  (xover_child1),
         .child2  (xover_child2),
-        .parent1 (pipelineSC_seltd[0]),
-        .parent2 (pipelineSC_seltd[1]),
+        .parent1 (xover_parent1),
+        .parent2 (xover_parent2),
         .enable  (xover_enable),
         .clk     (clk)
     );
 
-    // Selection - SEL
-    selection sel (
-        .selected (sel_selected),
+    // Selection  #1 - SEL
+    selection sel1 (
+        .selected (sel1_selected),
         .fitness1 (ff_fit1),
         .fitness2 (ff_fit2),
-        .enable   (sel_enable),
+        .enable   (sel1_enable),
+        .clk      (clk)
+    );
+
+    // Selection  #2 - SEL
+    selection sel2 (
+        .selected (sel2_selected),
+        .fitness1 (selbuffer1_out[(8 + 27) - 1:8]),
+        .fitness2 (selbuffer2_out[(8 + 27) - 1:8]),
+        .enable   (sel2_enable),
         .clk      (clk)
     );
 
@@ -230,8 +363,8 @@ module ga (
     fitness_function ff (
         .fitness1 (ff_fit1),
         .fitness2 (ff_fit2),
-        .chrom1   (pipelineIF_pop[0]),
-        .chrom2   (pipelineIF_pop[1]),
+        .chrom1   (pop_init_out1),
+        .chrom2   (pop_init_out2),
         .enable   (ff_enable),
         .clk      (clk)
     );
