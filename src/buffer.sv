@@ -21,7 +21,11 @@ module buffer #(
             producer_ptr <= 0;
         end else begin
             if (r_enable) begin
-                out <= buf_data[consumer_ptr];
+                if (consumer_ptr == producer_ptr && w_enable) begin
+                    out <= in;
+                end else begin
+                    out <= buf_data[consumer_ptr];
+                end
                 
                 if (consumer_ptr == SIZE - 1) begin
                     consumer_ptr <= 0;

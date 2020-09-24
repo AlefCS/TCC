@@ -65,6 +65,8 @@ module ga (
 
     // Signals for 'ff' module
     logic ff_enable;
+    logic [7:0] ff_chrom1;
+    logic [7:0] ff_chrom2;
     wire signed [26:0] ff_fit1;
     wire signed [26:0] ff_fit2;
     // Registers for the pipeline between fitness and selection
@@ -79,8 +81,6 @@ module ga (
 
     // Counter to know when to change to steady state
     reg [$clog2(`POP_SIZE >> 2) - 1:0] init3_counter;
-    // Counter to know when to start consuming from buffer
-    reg [$clog2(`POP_SIZE >> 1) - 1:0] fitTicks_counter;
     // Counter to know when to stop getting init population
     reg [$clog2(`POP_SIZE):0] firstTicks_counter;
 
@@ -89,7 +89,6 @@ module ga (
         if (reset) begin
             state <= INIT0;
             init3_counter <= 0;
-            fitTicks_counter <= 0;
             firstTicks_counter <= 0;
 
             // Initializing enable signals
@@ -104,31 +103,37 @@ module ga (
             selbuffer2_renable <= 1'b0;
             selbuffer2_wenable <= 1'b0;
         end else begin
-            // Connect pipelines
-            if (firstTicks_counter <= (`POP_SIZE >> 1)) begin
-                pipelineIF_pop <= {pop_init_out1, pop_init_out2};
-            end else begin
-                pipelineIF_pop <= {buffer_out[7:0], buffer_out[15:8]};
-            end
-
+            /*** CONNECT PIPELINES ***/
+            // Receive the same input of 'ff'
+            pipelineIF_pop <= {ff_chrom1, ff_chrom2};
+            pipelineFS_pop <= pipelineIF_pop;
             pipelineFS_fit <= {ff_fit1, ff_fit2};
-
             pipelineSbSb <= {selbuffer1_out, selbuffer2_out};
+
+            /*** ENABLE SIGNALS ***/
+            if (firstTicks_counter < (`POP_SIZE >> 1) - 1) begin
+                buffer_renable <= 1'b0;
+            end else if (firstTicks_counter < `POP_SIZE >> 1) begin
+                buffer_renable <= 1'b1;
+            end else begin
+                buffer_renable <= 1'b1;
+                selbuffer2_renable <= 1'b1;
+            end
 
             /*************************
             * Entrada dos selbuffers *
             *************************/
             if (sel1_selected == 1'b0) begin
-                selbuffer1_in <= {pipelineFS_pop[0], pipelineFS_fit[0]};
+                selbuffer1_in <= {pipelineFS_pop[0], 27'b0};
             end else begin
-                selbuffer1_in <= {pipelineFS_pop[1], pipelineFS_fit[1]};
+                selbuffer1_in <= {pipelineFS_pop[1], 27'b0};
             end
 
             if (firstTicks_counter <= (`POP_SIZE >> 1) + 2) begin
                 if (sel1_selected == 1'b0) begin
-                    selbuffer2_in <= pipelineFS_pop[0];
+                    selbuffer2_in <= {pipelineFS_pop[0], pipelineFS_fit[0]};
                 end else begin
-                    selbuffer2_in <= pipelineFS_pop[1];
+                    selbuffer2_in <= {pipelineFS_pop[1], pipelineFS_fit[1]};
                 end
             end else begin
                 if (sel2_selected == 1'b0) begin
@@ -138,7 +143,14 @@ module ga (
                 end
             end
 
-            pipelineFS_pop <= pipelineIF_pop;
+            // Counting 'firstTicks_counter'
+            if (firstTicks_counter < {($clog2(`POP_SIZE) + 1){1'b1}}) begin
+                // Until maximum value increment
+                firstTicks_counter <= firstTicks_counter + 1;
+            end else begin
+                // When reaches maximum stop incrementing
+                firstTicks_counter <= firstTicks_counter;
+            end
 
             /* if (state == INIT2_2 ||  state == INIT3) begin
                 if (sel1_selected == 1'b0) begin
@@ -153,7 +165,7 @@ module ga (
                     pipelineSC_seltd[1] <= pipelineFS_pop[1];
                 end
             end 
-            *
+            
             ** SUBSTITUÍDO PELA SOLUÇÃO LOGO ABAIXO **
             */
             if (sel1_selected == 1'b0) begin
@@ -163,9 +175,6 @@ module ga (
             end
 
             if (state == STEADY) begin
-                // Stop incrementing 'firstTicks_counter'
-                firstTicks_counter <= firstTicks_counter;
-
                 if (sel1_selected == 1'b0) begin
                     xover_parent1 <= pipelineFS_pop[0];
                 end else begin
@@ -178,9 +187,6 @@ module ga (
                     xover_parent2 <= pipelineSbSb[1][7:0];
                 end
             end else begin
-                // Increment 'firstTicks_counter'
-                firstTicks_counter <= firstTicks_counter + 1;
-
                 xover_parent1 <= pipelineSC_seltd;
                 if (sel1_selected == 1'b0) begin
                     xover_parent2 <= pipelineFS_pop[0];
@@ -266,79 +272,56 @@ module ga (
                 * esse estado.                                  *
                 ************************************************/
             endcase
-
-            if (ff_enable) begin
-                if (fitTicks_counter == (`POP_SIZE >> 1) - 2) begin
-                    fitTicks_counter <= fitTicks_counter;
-                    buffer_renable <= 1'b1;
-                end else begin
-                    fitTicks_counter <= fitTicks_counter + 1;
-                    buffer_renable <= 1'b0;
-                end
-            end else begin
-                fitTicks_counter <= fitTicks_counter;
-            end
             // TODO o resto de tudo
         end
     end
 
-    // SEL Buffer #1 - BUFFER
-    buffer #(
-        .SIZE  (`POP_SIZE >> 2),
-        .WIDTH (8 + 27)                         // Chromossome width + Fitness width
-    ) sel_buffer1 (
-        .out      ({best, best_fit}/* selbuffer1_out */),
-        .in       (selbuffer1_in),
-        .r_enable (selbuffer1_renable),
-        .w_enable (selbuffer1_wenable),
-        .reset    (reset),
+    // Main - Combinational
+    always_comb begin
+        // Mux for 'ff' input
+        if (firstTicks_counter <= (`POP_SIZE >> 1)) begin
+            // Select input as init population
+            ff_chrom1 = pop_init_out1;
+            ff_chrom2 = pop_init_out2;
+        end else begin
+            if (`POP_SIZE == 16) begin
+                if (firstTicks_counter < 12) begin 
+                    // Select input as 'mut' out (passing through buffer)
+                    ff_chrom1 = buffer_out[ 7:0];
+                    ff_chrom2 = buffer_out[15:8];
+                end else begin
+                    // Select input as 'mut' out
+                    ff_chrom1 = mut_child1;
+                    ff_chrom2 = mut_child2;
+                end
+            end else begin
+                // Select input as 'mut' out (ALWAYS passing through buffer)
+                ff_chrom1 = buffer_out[ 7:0];
+                ff_chrom2 = buffer_out[15:8];
+            end
+        end
+
+        // TODO apagar essa parte pois é só para testes
+        {best, best_fit} = selbuffer1_out;
+    end
+
+    // Population initializer - RNG
+    rng8 pop_init (
+        .rnd1  (pop_init_out1),
+        .rnd2  (pop_init_out2),
+        .seed  (seed),
+        .reset (reset),
+        .clk   (clk)
+    );
+
+    // Fitness Function - FIT
+    fitness_function ff (
+        .fitness1 (ff_fit1),
+        .fitness2 (ff_fit2),
+        .chrom1   (ff_chrom1),
+        .chrom2   (ff_chrom2),
+        .enable   (ff_enable),
         .clk      (clk)
-    );
-
-    // SEL Buffer #2 - BUFFER
-    buffer #(
-        .SIZE  (`POP_SIZE >> 2),
-        .WIDTH (8 + 27)                         // Chromossome width + Fitness width
-    ) sel_buffer2 (
-        .out      (selbuffer2_out),
-        .in       (selbuffer2_in),
-        .r_enable (selbuffer2_renable),
-        .w_enable (selbuffer2_wenable),
-        .reset    (reset),
-        .clk      (clk)
-    );
-
-    // Buffer - BUFFER
-    buffer #(
-        .SIZE  ((`POP_SIZE >> 2) - 1),
-        .WIDTH (8 << 1)                         // Chromossome width multiplied by 2
-    ) buffer (
-        .out      (buffer_out),
-        .in       ({mut_child1, mut_child2}),
-        .r_enable (buffer_renable),
-        .w_enable (buffer_wenable),
-        .reset    (reset),
-        .clk      (clk)
-    );
-
-    // Mutation - MUT
-    mutation mut (
-        .mut_child1  (mut_child1),
-        .mut_child2  (mut_child2),
-        .orig_child1 (xover_child1),
-        .orig_child2 (xover_child2),
-        .reset       (reset),
-        .clk         (clk)
-    );
-
-    // Crossover - XOVER
-    crossover xover (
-        .child1  (xover_child1),
-        .child2  (xover_child2),
-        .parent1 (xover_parent1),
-        .parent2 (xover_parent2),
-        .enable  (xover_enable),
-        .clk     (clk)
     );
 
     // Selection  #1 - SEL
@@ -359,23 +342,63 @@ module ga (
         .clk      (clk)
     );
 
-    // Fitness Function - FIT
-    fitness_function ff (
-        .fitness1 (ff_fit1),
-        .fitness2 (ff_fit2),
-        .chrom1   (pop_init_out1),
-        .chrom2   (pop_init_out2),
-        .enable   (ff_enable),
+    // Crossover - XOVER
+    crossover xover (
+        .child1  (xover_child1),
+        .child2  (xover_child2),
+        .parent1 (xover_parent1),
+        .parent2 (xover_parent2),
+        .enable  (xover_enable),
+        .clk     (clk)
+    );
+
+    // Mutation - MUT
+    mutation mut (
+        .mut_child1  (mut_child1),
+        .mut_child2  (mut_child2),
+        .orig_child1 (xover_child1),
+        .orig_child2 (xover_child2),
+        .reset       (reset),
+        .clk         (clk)
+    );
+
+    // Buffer - BUFFER
+    buffer #(
+        .SIZE  ((`POP_SIZE >> 2) - 1),
+        .WIDTH (8 << 1)                         // Chromossome width multiplied by 2
+    ) buffer (
+        .out      (buffer_out),
+        .in       ({mut_child1, mut_child2}),
+        .r_enable (buffer_renable),
+        .w_enable (buffer_wenable),
+        .reset    (reset),
         .clk      (clk)
     );
 
-    // Population initializer - RNG
-    rng8 pop_init (
-        .rnd1  (pop_init_out1),
-        .rnd2  (pop_init_out2),
-        .seed  (seed),
-        .reset (reset),
-        .clk   (clk)
+    // SEL Buffer #1 - BUFFER
+    buffer #(
+        .SIZE  (`POP_SIZE >> 2),
+        .WIDTH (8 + 27)                         // Chromossome width + Fitness width
+    ) sel_buffer1 (
+        .out      (selbuffer1_out),
+        .in       (selbuffer1_in),
+        .r_enable (selbuffer1_renable),
+        .w_enable (selbuffer1_wenable),
+        .reset    (reset),
+        .clk      (clk)
+    );
+
+    // SEL Buffer #2 - BUFFER
+    buffer #(
+        .SIZE  (`POP_SIZE >> 2),
+        .WIDTH (8 + 27)                         // Chromossome width + Fitness width
+    ) sel_buffer2 (
+        .out      (selbuffer2_out),
+        .in       (selbuffer2_in),
+        .r_enable (selbuffer2_renable),
+        .w_enable (selbuffer2_wenable),
+        .reset    (reset),
+        .clk      (clk)
     );
 
 endmodule
