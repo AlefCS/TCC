@@ -2,8 +2,8 @@
 
 module selection (
     output logic selected,
-    input  logic signed [26:0] fitness1,
-    input  logic signed [26:0] fitness2,
+    input  logic unsigned [26:0] fitness1,
+    input  logic unsigned [26:0] fitness2,
     input  logic enable,
     input  logic clk
 );

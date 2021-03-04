@@ -1,10 +1,12 @@
 `timescale 1ns / 1ps
 
-`define POP_SIZE 16
-
-module ga (
-    output logic [ 7:0] best,
-    output logic [26:0] best_fit,
+module ga #(
+    parameter POP_SIZE = 16,
+    parameter GENS = 500
+)(
+    output logic unsigned [ 7:0] best,
+    output logic unsigned [26:0] best_fit,
+    output logic finished,
     input  logic [31:0] seed,
     input  logic reset,
     input  logic clk
@@ -23,6 +25,16 @@ module ga (
 
     // State variable
     states_t state;
+
+    // Signals for 'get_best' module
+    wire [26:0] getbest_bestfit;
+    wire  [7:0] getbest_best;
+    wire [26:0] getbest_fitness1;
+    wire [26:0] getbest_fitness2;
+    wire  [7:0] getbest_chrom1;
+    wire  [7:0] getbest_chrom2;
+    logic getbest_reset;
+    logic getbest_enablesecond;
 
     // Signals for 'sel_buffer1' module
     wire  [(8 + 27) - 1:0] selbuffer1_out;
@@ -52,7 +64,7 @@ module ga (
     wire  [7:0] xover_child2;
     logic [7:0] xover_parent1;
     logic [7:0] xover_parent2;
-    
+
     // Signals for 'sel1' module
     logic sel1_enable;
     wire  sel1_selected;
@@ -80,9 +92,28 @@ module ga (
     reg [7:0] pipelineIF_pop[2];
 
     // Counter to know when to change to steady state
-    reg [$clog2(`POP_SIZE >> 2) - 1:0] init3_counter;
+    reg [$clog2(POP_SIZE >> 2) - 1:0] init3_counter;
     // Counter to know when to stop getting init population
-    reg [$clog2(`POP_SIZE):0] firstTicks_counter;
+    reg [$clog2(POP_SIZE):0] firstTicks_counter;
+    // Counter of generations
+    reg [15:0] gen_counter;
+    // Counter to know when best of generation is ready
+    reg [$clog2(POP_SIZE) - 1:0] best_ready_counter;
+
+    assign xover_parent1 = (state == STEADY) ? // if
+        (sel1_selected ? pipelineFS_pop[1] : pipelineFS_pop[0]) : // else
+        (pipelineSC_seltd);
+    assign xover_parent2 = (state == STEADY) ? // if
+        (sel2_selected ? pipelineSbSb[1][7:0] : pipelineSbSb[0][7:0]) : // else
+        (sel1_selected ? pipelineFS_pop[1] : pipelineFS_pop[0]);
+
+    assign selbuffer1_in = sel1_selected ? {pipelineFS_pop[1], pipelineFS_fit[1]} : {pipelineFS_pop[0], pipelineFS_fit[0]};
+    assign selbuffer2_in = (state != STEADY) ? // if
+        (sel1_selected ? {pipelineFS_pop[1], pipelineFS_fit[1]} : {pipelineFS_pop[0], pipelineFS_fit[0]}) : // else
+        (sel2_selected ? pipelineSbSb[1] : pipelineSbSb[0]);
+
+    assign {getbest_chrom1, getbest_fitness1} = selbuffer1_in;
+    assign {getbest_chrom2, getbest_fitness2} = selbuffer2_in;
 
     // Main
     always @ (posedge clk) begin
@@ -90,18 +121,23 @@ module ga (
             state <= INIT0;
             init3_counter <= 0;
             firstTicks_counter <= 0;
+            gen_counter <= -1;
+            best_ready_counter <= 0;
+            finished <= 1'b0;
 
             // Initializing enable signals
-            ff_enable          <= 1'b0;
-            sel1_enable        <= 1'b0;
-            sel2_enable        <= 1'b0;
-            xover_enable       <= 1'b0;
-            buffer_renable     <= 1'b0;
-            buffer_wenable     <= 1'b0;
-            selbuffer1_renable <= 1'b0;
-            selbuffer1_wenable <= 1'b0;
-            selbuffer2_renable <= 1'b0;
-            selbuffer2_wenable <= 1'b0;
+            ff_enable            <= 1'b0;
+            sel1_enable          <= 1'b0;
+            sel2_enable          <= 1'b0;
+            xover_enable         <= 1'b0;
+            buffer_renable       <= 1'b0;
+            buffer_wenable       <= 1'b0;
+            selbuffer1_renable   <= 1'b0;
+            selbuffer1_wenable   <= 1'b0;
+            selbuffer2_renable   <= 1'b0;
+            selbuffer2_wenable   <= 1'b0;
+            getbest_enablesecond <= 1'b0;
+            getbest_reset        <= 1'b1;
         end else begin
             /*** CONNECT PIPELINES ***/
             // Receive the same input of 'ff'
@@ -111,9 +147,9 @@ module ga (
             pipelineSbSb <= {selbuffer1_out, selbuffer2_out};
 
             /*** ENABLE SIGNALS ***/
-            if (firstTicks_counter < (`POP_SIZE >> 1) - 1) begin
+            if (firstTicks_counter < (POP_SIZE >> 1) - 1) begin
                 buffer_renable <= 1'b0;
-            end else if (firstTicks_counter < `POP_SIZE >> 1) begin
+            end else if (firstTicks_counter < POP_SIZE >> 1) begin
                 buffer_renable <= 1'b1;
             end else begin
                 buffer_renable <= 1'b1;
@@ -123,28 +159,8 @@ module ga (
             /*************************
             * Entrada dos selbuffers *
             *************************/
-            if (sel1_selected == 1'b0) begin
-                selbuffer1_in <= {pipelineFS_pop[0], 27'b0};
-            end else begin
-                selbuffer1_in <= {pipelineFS_pop[1], 27'b0};
-            end
-
-            if (firstTicks_counter <= (`POP_SIZE >> 1) + 2) begin
-                if (sel1_selected == 1'b0) begin
-                    selbuffer2_in <= {pipelineFS_pop[0], pipelineFS_fit[0]};
-                end else begin
-                    selbuffer2_in <= {pipelineFS_pop[1], pipelineFS_fit[1]};
-                end
-            end else begin
-                if (sel2_selected == 1'b0) begin
-                    selbuffer2_in <= pipelineSbSb[0];
-                end else begin
-                    selbuffer2_in <= pipelineSbSb[1];
-                end
-            end
-
             // Counting 'firstTicks_counter'
-            if (firstTicks_counter < {($clog2(`POP_SIZE) + 1){1'b1}}) begin
+            if (firstTicks_counter < {($clog2(POP_SIZE) + 1){1'b1}}) begin
                 // Until maximum value increment
                 firstTicks_counter <= firstTicks_counter + 1;
             end else begin
@@ -152,47 +168,32 @@ module ga (
                 firstTicks_counter <= firstTicks_counter;
             end
 
-            /* if (state == INIT2_2 ||  state == INIT3) begin
-                if (sel1_selected == 1'b0) begin
-                    pipelineSC_seltd[0] <= pipelineFS_pop[0];
-                end else begin
-                    pipelineSC_seltd[0] <= pipelineFS_pop[1];
-                end
-            end else begin
-                if (sel1_selected == 1'b0) begin
-                    pipelineSC_seltd[1] <= pipelineFS_pop[0];
-                end else begin
-                    pipelineSC_seltd[1] <= pipelineFS_pop[1];
-                end
-            end 
-            
-            ** SUBSTITUÍDO PELA SOLUÇÃO LOGO ABAIXO **
-            */
             if (sel1_selected == 1'b0) begin
                 pipelineSC_seltd <= pipelineFS_pop[0];
             end else begin
                 pipelineSC_seltd <= pipelineFS_pop[1];
             end
 
-            if (state == STEADY) begin
-                if (sel1_selected == 1'b0) begin
-                    xover_parent1 <= pipelineFS_pop[0];
+            // Counting generation and to know when to update best
+            if (!getbest_reset && getbest_enablesecond) begin
+                if (best_ready_counter == (POP_SIZE >> 1) - 2) begin
+                    best_ready_counter <= 0;
                 end else begin
-                    xover_parent1 <= pipelineFS_pop[1];
+                    best_ready_counter <= best_ready_counter + 2;
                 end
+            end else if (!getbest_reset) begin
+                if (best_ready_counter == (POP_SIZE >> 1) - 1) begin
+                    best_ready_counter <= 0;
+                end else begin
+                    best_ready_counter <= best_ready_counter + 1;
+                end
+            end
 
-                if (sel2_selected == 1'b0) begin
-                    xover_parent2 <= pipelineSbSb[0][7:0];
-                end else begin
-                    xover_parent2 <= pipelineSbSb[1][7:0];
-                end
-            end else begin
-                xover_parent1 <= pipelineSC_seltd;
-                if (sel1_selected == 1'b0) begin
-                    xover_parent2 <= pipelineFS_pop[0];
-                end else begin
-                    xover_parent2 <= pipelineFS_pop[1];
-                end
+            // Update best
+            if (!getbest_reset && best_ready_counter == 0) begin
+                best <= getbest_best;
+                best_fit <= getbest_bestfit;
+                gen_counter <= gen_counter + 1;
             end
 
             case (state)
@@ -210,6 +211,7 @@ module ga (
                     state <= INIT2_2;
 
                     selbuffer1_wenable <= 1'b1;
+                    getbest_reset <= 1'b0;
                 end
                 INIT2_2: begin
                     state <= INIT3;
@@ -220,21 +222,22 @@ module ga (
                 end
                 INIT3: begin
                     // Check pass to STEADY state condition
-                    if (init3_counter < (`POP_SIZE >> 2) - 1) begin
+                    if (init3_counter < (POP_SIZE >> 2) - 1) begin
                         state <= INIT4;
 
                         xover_enable       <= 1'b0;
                         selbuffer1_wenable <= 1'b1;
                         selbuffer2_wenable <= 1'b0;
 
-                        if (init3_counter == (`POP_SIZE >> 2) - 2) begin
+                        if (init3_counter == (POP_SIZE >> 2) - 2) begin
                             selbuffer1_renable <= 1'b1;
                         end
                     end else begin
                         state <= STEADY;
 
-                        selbuffer1_wenable <= 1'b1;
-                        selbuffer2_wenable <= 1'b1;
+                        selbuffer1_wenable   <= 1'b1;
+                        selbuffer2_wenable   <= 1'b1;
+                        getbest_enablesecond <= 1'b1;
                     end
 
                     // Enable signals
@@ -251,41 +254,70 @@ module ga (
                     buffer_wenable     <= 1'b1;
 
                     // Check if it's going to last INIT3
-                    if (init3_counter == (`POP_SIZE >> 2) - 1) begin
+                    if (init3_counter == (POP_SIZE >> 2) - 1) begin
                         sel2_enable <= 1'b1;
                     end
                 end
                 STEADY: begin
-                    // TODO - Estado estacionário -- Atingiu condição de término vai para FINISHED
-                    // TODO se está indo para FINISHED então desabilitar todos os enables
+                    if (gen_counter == GENS - 1 && best_ready_counter == 0) begin
+                        state <= FINISHED;
+                        finished <= 1'b1;
+                        // Disable everything
+                        ff_enable            <= 1'b0;
+                        sel1_enable          <= 1'b0;
+                        sel2_enable          <= 1'b0;
+                        xover_enable         <= 1'b0;
+                        buffer_renable       <= 1'b0;
+                        buffer_wenable       <= 1'b0;
+                        selbuffer1_renable   <= 1'b0;
+                        selbuffer1_wenable   <= 1'b0;
+                        selbuffer2_renable   <= 1'b0;
+                        selbuffer2_wenable   <= 1'b0;
+                        getbest_enablesecond <= 1'b0;
+                        getbest_reset        <= 1'b1;
+                    end
 
                 end
                 FINISHED: begin
-                    // TODO - Terminou execução do algoritmo
+                    finished <= 1'b1;
+                    state <= FINISHED;
                 end
-                default: state <= INIT0;
-                /* TODO *****************************************
-                * estados de PRE-INIT para forçar um reset caso *
-                * atinja um estado desconhecido (no default).   *
-                *                                               *
-                * Se for implementado então o default levaria a *
-                * esse estado.                                  *
-                ************************************************/
+                default: begin
+                    state <= INIT0;
+                    init3_counter <= 0;
+                    firstTicks_counter <= 0;
+                    gen_counter <= -1;
+                    best_ready_counter <= 0;
+                    finished <= 1'b0;
+
+                    // Initializing enable signals
+                    ff_enable            <= 1'b0;
+                    sel1_enable          <= 1'b0;
+                    sel2_enable          <= 1'b0;
+                    xover_enable         <= 1'b0;
+                    buffer_renable       <= 1'b0;
+                    buffer_wenable       <= 1'b0;
+                    selbuffer1_renable   <= 1'b0;
+                    selbuffer1_wenable   <= 1'b0;
+                    selbuffer2_renable   <= 1'b0;
+                    selbuffer2_wenable   <= 1'b0;
+                    getbest_enablesecond <= 1'b0;
+                    getbest_reset        <= 1'b1;
+                end
             endcase
-            // TODO o resto de tudo
         end
     end
 
     // Main - Combinational
     always_comb begin
         // Mux for 'ff' input
-        if (firstTicks_counter <= (`POP_SIZE >> 1)) begin
+        if (firstTicks_counter <= (POP_SIZE >> 1)) begin
             // Select input as init population
             ff_chrom1 = pop_init_out1;
             ff_chrom2 = pop_init_out2;
         end else begin
-            if (`POP_SIZE == 16) begin
-                if (firstTicks_counter < 12) begin 
+            if (POP_SIZE == 16) begin
+                if (firstTicks_counter < 12) begin
                     // Select input as 'mut' out (passing through buffer)
                     ff_chrom1 = buffer_out[ 7:0];
                     ff_chrom2 = buffer_out[15:8];
@@ -300,9 +332,6 @@ module ga (
                 ff_chrom2 = buffer_out[15:8];
             end
         end
-
-        // TODO apagar essa parte pois é só para testes
-        {best, best_fit} = selbuffer1_out;
     end
 
     // Population initializer - RNG
@@ -336,8 +365,8 @@ module ga (
     // Selection  #2 - SEL
     selection sel2 (
         .selected (sel2_selected),
-        .fitness1 (selbuffer1_out[(8 + 27) - 1:8]),
-        .fitness2 (selbuffer2_out[(8 + 27) - 1:8]),
+        .fitness1 (selbuffer1_out[26:0]),
+        .fitness2 (selbuffer2_out[26:0]),
         .enable   (sel2_enable),
         .clk      (clk)
     );
@@ -364,7 +393,7 @@ module ga (
 
     // Buffer - BUFFER
     buffer #(
-        .SIZE  ((`POP_SIZE >> 2) - 1),
+        .SIZE  ((POP_SIZE >> 2) - 1),
         .WIDTH (8 << 1)                         // Chromossome width multiplied by 2
     ) buffer (
         .out      (buffer_out),
@@ -377,7 +406,7 @@ module ga (
 
     // SEL Buffer #1 - BUFFER
     buffer #(
-        .SIZE  (`POP_SIZE >> 2),
+        .SIZE  (POP_SIZE >> 2),
         .WIDTH (8 + 27)                         // Chromossome width + Fitness width
     ) sel_buffer1 (
         .out      (selbuffer1_out),
@@ -390,7 +419,7 @@ module ga (
 
     // SEL Buffer #2 - BUFFER
     buffer #(
-        .SIZE  (`POP_SIZE >> 2),
+        .SIZE  (POP_SIZE >> 2),
         .WIDTH (8 + 27)                         // Chromossome width + Fitness width
     ) sel_buffer2 (
         .out      (selbuffer2_out),
@@ -399,6 +428,22 @@ module ga (
         .w_enable (selbuffer2_wenable),
         .reset    (reset),
         .clk      (clk)
+    );
+
+    // Get Best
+    get_best #(
+        .FIT_WIDTH   (27),
+        .CHROM_WIDTH  (8)
+    ) get_best (
+        .best_fit      (getbest_bestfit),
+        .best          (getbest_best),
+        .fitness1      (getbest_fitness1),
+        .fitness2      (getbest_fitness2),
+        .chrom1        (getbest_chrom1),
+        .chrom2        (getbest_chrom2),
+        .enable_second (getbest_enablesecond),
+        .reset         (getbest_reset),
+        .clk           (clk)
     );
 
 endmodule

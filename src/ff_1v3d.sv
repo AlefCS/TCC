@@ -1,8 +1,8 @@
 `timescale 1ns / 1ps
 
 module ff_1v3d (
-    output logic signed [26:0] fitness,
-    input  logic signed [7:0] chrom,
+    output logic unsigned [26:0] fitness,
+    input  logic unsigned [7:0] chrom,
     input  logic enable,
     input  logic clk
 );
