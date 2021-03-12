@@ -1,11 +1,22 @@
 `timescale 1ns / 1ps
 
+`include "buffer.sv"
+`include "crossover.sv"
+`include "fitness_function.sv"
+`include "get_best.sv"
+`include "mutation.sv"
+`include "rng.sv"
+`include "selection.sv"
+
+`define FITNESS_WIDTH ((CHROM_WIDTH + 1) * 3)
+
 module ga #(
-    parameter POP_SIZE = 16,
-    parameter GENS = 500
+    parameter POP_SIZE = 32,
+    parameter GENS = 500,
+    parameter CHROM_WIDTH = 16
 )(
-    output logic unsigned [ 7:0] best,
-    output logic unsigned [26:0] best_fit,
+    output logic unsigned [CHROM_WIDTH - 1:0] best,
+    output logic unsigned [`FITNESS_WIDTH - 1:0] best_fit,
     output logic finished,
     input  logic [31:0] seed,
     input  logic reset,
@@ -27,49 +38,49 @@ module ga #(
     states_t state;
 
     // Signals for 'get_best' module
-    wire [26:0] getbest_bestfit;
-    wire  [7:0] getbest_best;
-    wire [26:0] getbest_fitness1;
-    wire [26:0] getbest_fitness2;
-    wire  [7:0] getbest_chrom1;
-    wire  [7:0] getbest_chrom2;
+    wire [`FITNESS_WIDTH - 1:0] getbest_bestfit;
+    wire   [CHROM_WIDTH - 1:0] getbest_best;
+    wire [`FITNESS_WIDTH - 1:0] getbest_fitness1;
+    wire [`FITNESS_WIDTH - 1:0] getbest_fitness2;
+    wire   [CHROM_WIDTH - 1:0] getbest_chrom1;
+    wire   [CHROM_WIDTH - 1:0] getbest_chrom2;
     logic getbest_reset;
     logic getbest_enablesecond;
 
     // Signals for 'sel_buffer1' module
-    wire  [(8 + 27) - 1:0] selbuffer1_out;
-    logic [(8 + 27) - 1:0] selbuffer1_in;
+    wire  [(CHROM_WIDTH + `FITNESS_WIDTH) - 1:0] selbuffer1_out;
+    logic [(CHROM_WIDTH + `FITNESS_WIDTH) - 1:0] selbuffer1_in;
     logic selbuffer1_renable;
     logic selbuffer1_wenable;
 
     // Signals for 'sel_buffer2' module
-    wire  [(8 + 27) - 1:0] selbuffer2_out;
-    logic [(8 + 27) - 1:0] selbuffer2_in;
+    wire  [(CHROM_WIDTH + `FITNESS_WIDTH) - 1:0] selbuffer2_out;
+    logic [(CHROM_WIDTH + `FITNESS_WIDTH) - 1:0] selbuffer2_in;
     logic selbuffer2_renable;
     logic selbuffer2_wenable;
-    reg  [(8 + 27) - 1:0] pipelineSbSb[2];
+    reg  [(CHROM_WIDTH + `FITNESS_WIDTH) - 1:0] pipelineSbSb[2];
 
     // Signals for 'buffer' module
     logic buffer_renable;
     logic buffer_wenable;
-    wire [(8 << 1) - 1:0] buffer_out;
+    wire [(CHROM_WIDTH << 1) - 1:0] buffer_out;
 
     // Signals for 'mut' module
-    wire [7:0] mut_child1;
-    wire [7:0] mut_child2;
+    wire [CHROM_WIDTH - 1:0] mut_child1;
+    wire [CHROM_WIDTH - 1:0] mut_child2;
 
     // Signals for 'xover' module
     logic xover_enable;
-    wire  [7:0] xover_child1;
-    wire  [7:0] xover_child2;
-    logic [7:0] xover_parent1;
-    logic [7:0] xover_parent2;
+    wire  [CHROM_WIDTH - 1:0] xover_child1;
+    wire  [CHROM_WIDTH - 1:0] xover_child2;
+    logic [CHROM_WIDTH - 1:0] xover_parent1;
+    logic [CHROM_WIDTH - 1:0] xover_parent2;
 
     // Signals for 'sel1' module
     logic sel1_enable;
     wire  sel1_selected;
     // Registers for the pipeline between selection and crossover
-    reg [7:0] pipelineSC_seltd;
+    reg [CHROM_WIDTH - 1:0] pipelineSC_seltd;
 
     // Signals for 'sel2' module
     logic sel2_enable;
@@ -77,19 +88,19 @@ module ga #(
 
     // Signals for 'ff' module
     logic ff_enable;
-    logic [7:0] ff_chrom1;
-    logic [7:0] ff_chrom2;
-    wire signed [26:0] ff_fit1;
-    wire signed [26:0] ff_fit2;
+    logic [CHROM_WIDTH - 1:0] ff_chrom1;
+    logic [CHROM_WIDTH - 1:0] ff_chrom2;
+    wire signed [`FITNESS_WIDTH - 1:0] ff_fit1;
+    wire signed [`FITNESS_WIDTH - 1:0] ff_fit2;
     // Registers for the pipeline between fitness and selection
-    reg [7:0]  pipelineFS_pop[2];
-    reg [26:0] pipelineFS_fit[2];             // Hold the fitnesses for the selbuffer
+    reg   [CHROM_WIDTH - 1:0] pipelineFS_pop[2];
+    reg [`FITNESS_WIDTH - 1:0] pipelineFS_fit[2];             // Hold the fitnesses for the selbuffer
 
     // Signals for 'pop_init' module
-    wire [7:0] pop_init_out1;
-    wire [7:0] pop_init_out2;
+    wire [CHROM_WIDTH - 1:0] pop_init_out1;
+    wire [CHROM_WIDTH - 1:0] pop_init_out2;
     // Register for the pipeline between initializer and fitness
-    reg [7:0] pipelineIF_pop[2];
+    reg [CHROM_WIDTH - 1:0] pipelineIF_pop[2];
 
     // Counter to know when to change to steady state
     reg [$clog2(POP_SIZE >> 2) - 1:0] init3_counter;
@@ -104,7 +115,7 @@ module ga #(
         (sel1_selected ? pipelineFS_pop[1] : pipelineFS_pop[0]) : // else
         (pipelineSC_seltd);
     assign xover_parent2 = (state == STEADY) ? // if
-        (sel2_selected ? pipelineSbSb[1][7:0] : pipelineSbSb[0][7:0]) : // else
+        (sel2_selected ? pipelineSbSb[1][CHROM_WIDTH - 1:0] : pipelineSbSb[0][CHROM_WIDTH - 1:0]) : // else
         (sel1_selected ? pipelineFS_pop[1] : pipelineFS_pop[0]);
 
     assign selbuffer1_in = sel1_selected ? {pipelineFS_pop[1], pipelineFS_fit[1]} : {pipelineFS_pop[0], pipelineFS_fit[0]};
@@ -275,8 +286,9 @@ module ga #(
                         selbuffer2_wenable   <= 1'b0;
                         getbest_enablesecond <= 1'b0;
                         getbest_reset        <= 1'b1;
+                    end else begin
+                        buffer_wenable <= 1'b1;
                     end
-
                 end
                 FINISHED: begin
                     finished <= 1'b1;
@@ -319,8 +331,8 @@ module ga #(
             if (POP_SIZE == 16) begin
                 if (firstTicks_counter < 12) begin
                     // Select input as 'mut' out (passing through buffer)
-                    ff_chrom1 = buffer_out[ 7:0];
-                    ff_chrom2 = buffer_out[15:8];
+                    ff_chrom1 = buffer_out[CHROM_WIDTH - 1:0];
+                    ff_chrom2 = buffer_out[(CHROM_WIDTH << 1) - 1:CHROM_WIDTH];
                 end else begin
                     // Select input as 'mut' out
                     ff_chrom1 = mut_child1;
@@ -328,14 +340,14 @@ module ga #(
                 end
             end else begin
                 // Select input as 'mut' out (ALWAYS passing through buffer)
-                ff_chrom1 = buffer_out[ 7:0];
-                ff_chrom2 = buffer_out[15:8];
+                ff_chrom1 = buffer_out[CHROM_WIDTH - 1:0];
+                ff_chrom2 = buffer_out[(CHROM_WIDTH << 1) - 1:CHROM_WIDTH];
             end
         end
     end
 
     // Population initializer - RNG
-    rng8 pop_init (
+    rng #(CHROM_WIDTH) pop_init (
         .rnd1  (pop_init_out1),
         .rnd2  (pop_init_out2),
         .seed  (seed),
@@ -344,7 +356,9 @@ module ga #(
     );
 
     // Fitness Function - FIT
-    fitness_function ff (
+    fitness_function #(
+        .CHROM_WIDTH   (CHROM_WIDTH)
+    ) ff (
         .fitness1 (ff_fit1),
         .fitness2 (ff_fit2),
         .chrom1   (ff_chrom1),
@@ -354,7 +368,7 @@ module ga #(
     );
 
     // Selection  #1 - SEL
-    selection sel1 (
+    selection #(`FITNESS_WIDTH) sel1 (
         .selected (sel1_selected),
         .fitness1 (ff_fit1),
         .fitness2 (ff_fit2),
@@ -363,7 +377,7 @@ module ga #(
     );
 
     // Selection  #2 - SEL
-    selection sel2 (
+    selection #(`FITNESS_WIDTH) sel2 (
         .selected (sel2_selected),
         .fitness1 (selbuffer1_out[26:0]),
         .fitness2 (selbuffer2_out[26:0]),
@@ -372,7 +386,7 @@ module ga #(
     );
 
     // Crossover - XOVER
-    crossover xover (
+    crossover #(CHROM_WIDTH) xover (
         .child1  (xover_child1),
         .child2  (xover_child2),
         .parent1 (xover_parent1),
@@ -382,11 +396,14 @@ module ga #(
     );
 
     // Mutation - MUT
-    mutation mut (
+    mutation #(
+        .CHROM_WIDTH (CHROM_WIDTH)
+    ) mut (
         .mut_child1  (mut_child1),
         .mut_child2  (mut_child2),
         .orig_child1 (xover_child1),
         .orig_child2 (xover_child2),
+        .seed        (~seed),
         .reset       (reset),
         .clk         (clk)
     );
@@ -394,7 +411,7 @@ module ga #(
     // Buffer - BUFFER
     buffer #(
         .SIZE  ((POP_SIZE >> 2) - 1),
-        .WIDTH (8 << 1)                         // Chromossome width multiplied by 2
+        .WIDTH (CHROM_WIDTH << 1)
     ) buffer (
         .out      (buffer_out),
         .in       ({mut_child1, mut_child2}),
@@ -407,7 +424,7 @@ module ga #(
     // SEL Buffer #1 - BUFFER
     buffer #(
         .SIZE  (POP_SIZE >> 2),
-        .WIDTH (8 + 27)                         // Chromossome width + Fitness width
+        .WIDTH (CHROM_WIDTH + `FITNESS_WIDTH)
     ) sel_buffer1 (
         .out      (selbuffer1_out),
         .in       (selbuffer1_in),
@@ -420,7 +437,7 @@ module ga #(
     // SEL Buffer #2 - BUFFER
     buffer #(
         .SIZE  (POP_SIZE >> 2),
-        .WIDTH (8 + 27)                         // Chromossome width + Fitness width
+        .WIDTH (CHROM_WIDTH + `FITNESS_WIDTH)
     ) sel_buffer2 (
         .out      (selbuffer2_out),
         .in       (selbuffer2_in),
@@ -432,8 +449,8 @@ module ga #(
 
     // Get Best
     get_best #(
-        .FIT_WIDTH   (27),
-        .CHROM_WIDTH  (8)
+        .FITNESS_WIDTH (`FITNESS_WIDTH),
+        .CHROM_WIDTH   (CHROM_WIDTH)
     ) get_best (
         .best_fit      (getbest_bestfit),
         .best          (getbest_best),

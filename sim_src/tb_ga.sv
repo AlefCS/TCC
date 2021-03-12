@@ -2,19 +2,21 @@
 
 `include "../src/ga.sv"
 
-`define POP_SIZE 16
-`define GENS 100
+`define POP_SIZE 32
+`define GENS 1000
+`define CHROM_WIDTH 16
+`define FITNESS_WIDTH ((`CHROM_WIDTH + 1) * 3)
 `define SEED 32'h895C80A7
 // `define SEED 32'hCDE5_A1EF
 
 module tb_ga();
-    logic [ 7:0] best;
-    logic [26:0] best_fit;
+    logic [`CHROM_WIDTH - 1:0] best;
+    logic [`FITNESS_WIDTH - 1:0] best_fit;
     logic finished;
     logic reset;
     logic clk;
 
-    reg [7:0] bests[`GENS];
+    reg [`CHROM_WIDTH - 1:0] bests[`GENS];
     int unsigned i;
 
     initial begin
@@ -51,8 +53,10 @@ module tb_ga();
     end
 
     ga #(
-        .POP_SIZE (`POP_SIZE),
-        .GENS     (`GENS)
+        .POP_SIZE      (`POP_SIZE),
+        .GENS          (`GENS),
+        .CHROM_WIDTH   (`CHROM_WIDTH),
+        .FITNESS_WIDTH (`FITNESS_WIDTH)
     ) DUT (
         .best     (best),
         .best_fit (best_fit),
