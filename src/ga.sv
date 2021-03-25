@@ -115,7 +115,7 @@ module ga #(
         (sel1_selected ? pipelineFS_pop[1] : pipelineFS_pop[0]) : // else
         (pipelineSC_seltd);
     assign xover_parent2 = (state == STEADY) ? // if
-        (sel2_selected ? pipelineSbSb[1][CHROM_WIDTH - 1:0] : pipelineSbSb[0][CHROM_WIDTH - 1:0]) : // else
+        (sel2_selected ? pipelineSbSb[1][CHROM_WIDTH + `FITNESS_WIDTH - 1:`FITNESS_WIDTH] : pipelineSbSb[0][CHROM_WIDTH + `FITNESS_WIDTH - 1:`FITNESS_WIDTH]) : // else
         (sel1_selected ? pipelineFS_pop[1] : pipelineFS_pop[0]);
 
     assign selbuffer1_in = sel1_selected ? {pipelineFS_pop[1], pipelineFS_fit[1]} : {pipelineFS_pop[0], pipelineFS_fit[0]};
@@ -331,8 +331,8 @@ module ga #(
             if (POP_SIZE == 16) begin
                 if (firstTicks_counter < 12) begin
                     // Select input as 'mut' out (passing through buffer)
-                    ff_chrom1 = buffer_out[CHROM_WIDTH - 1:0];
-                    ff_chrom2 = buffer_out[(CHROM_WIDTH << 1) - 1:CHROM_WIDTH];
+                    ff_chrom1 = buffer_out[(CHROM_WIDTH << 1) - 1:CHROM_WIDTH];
+                    ff_chrom2 = buffer_out[CHROM_WIDTH - 1:0];
                 end else begin
                     // Select input as 'mut' out
                     ff_chrom1 = mut_child1;
@@ -340,8 +340,8 @@ module ga #(
                 end
             end else begin
                 // Select input as 'mut' out (ALWAYS passing through buffer)
-                ff_chrom1 = buffer_out[CHROM_WIDTH - 1:0];
-                ff_chrom2 = buffer_out[(CHROM_WIDTH << 1) - 1:CHROM_WIDTH];
+                ff_chrom1 = buffer_out[(CHROM_WIDTH << 1) - 1:CHROM_WIDTH];
+                ff_chrom2 = buffer_out[CHROM_WIDTH - 1:0];
             end
         end
     end
@@ -379,8 +379,8 @@ module ga #(
     // Selection  #2 - SEL
     selection #(`FITNESS_WIDTH) sel2 (
         .selected (sel2_selected),
-        .fitness1 (selbuffer1_out[26:0]),
-        .fitness2 (selbuffer2_out[26:0]),
+        .fitness1 (selbuffer1_out[`FITNESS_WIDTH - 1:0]),
+        .fitness2 (selbuffer2_out[`FITNESS_WIDTH - 1:0]),
         .enable   (sel2_enable),
         .clk      (clk)
     );
