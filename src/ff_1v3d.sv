@@ -1,19 +1,16 @@
 `timescale 1ns / 1ps
 
-`define OUTPUT_WIDTH ((INPUT_WIDTH + 1) * 3)
+`include "common_defines.vh"
 
-module ff_1v3d #(
-    parameter INPUT_WIDTH = 8
-)(
-    output logic unsigned [`OUTPUT_WIDTH - 1:0] fitness,
-    input  logic unsigned  [INPUT_WIDTH - 1:0] chrom,
+module ff_1v3d (
+    output logic unsigned [`FITNESS_WIDTH - 1:0] fitness,
+    input  logic unsigned  [`CHROM_WIDTH - 1:0] chrom,
     input  logic enable,
     input  logic clk
 );
     always @ (posedge clk) begin
         if (enable) begin
-            // Calculate output of 'f(x) = x^3 - 15*x^2 + 500'
-            fitness <= (chrom - 10)*(chrom - 10)*(chrom + 5);
+            fitness <= `FITNESS_FUNCTION;
         end
     end
 endmodule

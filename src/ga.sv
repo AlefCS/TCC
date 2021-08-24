@@ -1,6 +1,8 @@
 `timescale 1ns / 1ps
 
+`include "common_defines.vh"
 `include "buffer.sv"
+`include "sel_buffer.sv"
 `include "crossover.sv"
 `include "fitness_function.sv"
 `include "get_best.sv"
@@ -8,12 +10,10 @@
 `include "rng.sv"
 `include "selection.sv"
 
-`define FITNESS_WIDTH ((CHROM_WIDTH + 1) * 3)
-
 module ga #(
-    parameter POP_SIZE = 32,
-    parameter GENS = 500,
-    parameter CHROM_WIDTH = 16
+    parameter POP_SIZE = `POP_SIZE,
+    parameter GENS = `GENS,
+    parameter CHROM_WIDTH = `CHROM_WIDTH
 )(
     output logic unsigned [CHROM_WIDTH - 1:0] best,
     output logic unsigned [`FITNESS_WIDTH - 1:0] best_fit,
@@ -356,9 +356,7 @@ module ga #(
     );
 
     // Fitness Function - FIT
-    fitness_function #(
-        .CHROM_WIDTH   (CHROM_WIDTH)
-    ) ff (
+    fitness_function ff (
         .fitness1 (ff_fit1),
         .fitness2 (ff_fit2),
         .chrom1   (ff_chrom1),
@@ -397,7 +395,8 @@ module ga #(
 
     // Mutation - MUT
     mutation #(
-        .CHROM_WIDTH (CHROM_WIDTH)
+        .CHROM_WIDTH (CHROM_WIDTH),
+        .MUT_RATE    (`MUT_RATE)
     ) mut (
         .mut_child1  (mut_child1),
         .mut_child2  (mut_child2),
@@ -422,7 +421,7 @@ module ga #(
     );
 
     // SEL Buffer #1 - BUFFER
-    buffer #(
+    sel_buffer #(
         .SIZE  (POP_SIZE >> 2),
         .WIDTH (CHROM_WIDTH + `FITNESS_WIDTH)
     ) sel_buffer1 (
@@ -435,7 +434,7 @@ module ga #(
     );
 
     // SEL Buffer #2 - BUFFER
-    buffer #(
+    sel_buffer #(
         .SIZE  (POP_SIZE >> 2),
         .WIDTH (CHROM_WIDTH + `FITNESS_WIDTH)
     ) sel_buffer2 (

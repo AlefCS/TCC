@@ -27,7 +27,7 @@ module get_best #(
                 end else begin
                     if (fitness2 < best_fit) begin
                         best_fit <= fitness2;
-                        best     <= chrom1;
+                        best     <= chrom2;
                     end
                 end
             end else begin
